@@ -123,7 +123,7 @@ func (b Builder) Build(name string) *Comp {
 	gmmu.TickingComponent = *sim.NewTickingComponent(
 		name, b.engine, b.freq, gmmu)
 
-	// Set default values if not specified
+	// Set default values if not specified my change
 	if b.maxNumReqInFlight == 0 {
 		b.maxNumReqInFlight = 16 // Default from MakeBuilder
 	}
@@ -131,14 +131,14 @@ func (b Builder) Build(name string) *Comp {
 		b.pageWalkingLatency = 10 // Reasonable default
 	}
 	if b.cuckooFilterCapacity == 0 {
-		b.cuckooFilterCapacity = 1000000 // Default capacity for ~1MB
+		b.cuckooFilterCapacity = 5000000 // Default capacity for ~1MB
 	}
 
 	b.createPorts(name, gmmu)
 	b.createPageTable(gmmu)
 	b.configureInternalStates(gmmu)
 
-	// Initialize Cuckoo filter
+	// Initialize Cuckoo filter my change
 	gmmu.cuckooFilter = cuckoo.NewFilter(b.cuckooFilterCapacity)
 	gmmu.cuckooMutex = sync.Mutex{} // Initialize mutex for thread safety
 

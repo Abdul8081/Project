@@ -59,7 +59,7 @@ func (gmmu *Comp) Tick(now sim.VTimeInSec) bool {
 	return madeProgress
 }
 
-// my change
+// my change incode VAddr and PID to cuckoo filter implementation like insert, delete, lookup
 func (gmmu *Comp) encodeVAddrPID(vAddr uint64, pid vm.PID) []byte {
 	buf := make([]byte, 12) // 8 bytes for vAddr + 4 bytes for PID
 	binary.LittleEndian.PutUint64(buf[0:8], vAddr)
