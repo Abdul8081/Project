@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	cuckoo "github.com/seiflotfy/cuckoofilter"
+	// go mod init example/cuckoo
 )
 
 func main() {

@@ -4,20 +4,30 @@
 package gmmu
 
 import (
+	"sync"
+
 	"github.com/sarchlab/akita/v3/mem/vm"
 	"github.com/sarchlab/akita/v3/sim"
+	cuckoo "github.com/seiflotfy/cuckoofilter"
 )
 
 // A Builder can build GMMU component
 type Builder struct {
-	engine             sim.Engine
-	freq               sim.Freq
-	log2PageSize       uint64
-	pageTable          vm.PageTable
-	maxNumReqInFlight  int
-	pageWalkingLatency int
-	deviceID           uint64
-	lowModule          sim.Port
+	engine               sim.Engine
+	freq                 sim.Freq
+	log2PageSize         uint64
+	pageTable            vm.PageTable
+	maxNumReqInFlight    int
+	pageWalkingLatency   int
+	deviceID             uint64
+	lowModule            sim.Port
+	cuckooFilterCapacity uint // Add field for Cuckoo filter capacity my change
+}
+
+// my change
+func (b *Builder) WithCuckooFilterCapacity(capacity uint) *Builder {
+	b.cuckooFilterCapacity = capacity
+	return b
 }
 
 // MakeBuilder creates a new builder
@@ -113,9 +123,24 @@ func (b Builder) Build(name string) *Comp {
 	gmmu.TickingComponent = *sim.NewTickingComponent(
 		name, b.engine, b.freq, gmmu)
 
+	// Set default values if not specified
+	if b.maxNumReqInFlight == 0 {
+		b.maxNumReqInFlight = 16 // Default from MakeBuilder
+	}
+	if b.pageWalkingLatency == 0 {
+		b.pageWalkingLatency = 10 // Reasonable default
+	}
+	if b.cuckooFilterCapacity == 0 {
+		b.cuckooFilterCapacity = 1000000 // Default capacity for ~1MB
+	}
+
 	b.createPorts(name, gmmu)
 	b.createPageTable(gmmu)
 	b.configureInternalStates(gmmu)
+
+	// Initialize Cuckoo filter
+	gmmu.cuckooFilter = cuckoo.NewFilter(b.cuckooFilterCapacity)
+	gmmu.cuckooMutex = sync.Mutex{} // Initialize mutex for thread safety
 
 	return gmmu
 }

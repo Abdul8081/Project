@@ -4,12 +4,15 @@
 package gmmu
 
 import (
+	"encoding/binary"
 	"log"
 	"reflect"
+	"sync"
 
 	"github.com/sarchlab/akita/v3/mem/vm"
 	"github.com/sarchlab/akita/v3/sim"
 	"github.com/sarchlab/akita/v3/tracing"
+	cuckoo "github.com/seiflotfy/cuckoofilter"
 )
 
 type transaction struct {
@@ -40,6 +43,8 @@ type Comp struct {
 
 	toRemoveFromPTW        []int
 	PageAccessedByDeviceID map[uint64][]uint64
+	cuckooFilter           *cuckoo.Filter // Cuckoo filter for fast lookup
+	cuckooMutex            sync.Mutex     // Mutex for thread-safe filter access my change
 }
 
 // Tick defines how the gmmu update state each cycle
@@ -52,6 +57,14 @@ func (gmmu *Comp) Tick(now sim.VTimeInSec) bool {
 	madeProgress = gmmu.fetchFromBottom(now) || madeProgress
 
 	return madeProgress
+}
+
+// my change
+func (gmmu *Comp) encodeVAddrPID(vAddr uint64, pid vm.PID) []byte {
+	buf := make([]byte, 12) // 8 bytes for vAddr + 4 bytes for PID
+	binary.LittleEndian.PutUint64(buf[0:8], vAddr)
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(pid))
+	return buf
 }
 
 func (gmmu *Comp) parseFromTop(now sim.VTimeInSec) bool {
@@ -68,13 +81,32 @@ func (gmmu *Comp) parseFromTop(now sim.VTimeInSec) bool {
 
 	switch req := req.(type) {
 	case *vm.TranslationReq:
+		// Check Cuckoo filter my change
+		gmmu.cuckooMutex.Lock()
+		found := gmmu.cuckooFilter.Lookup(gmmu.encodeVAddrPID(req.VAddr, req.PID))
+		gmmu.cuckooMutex.Unlock()
+		if found {
+			// Verify with page table to handle false positives
+			page, found := gmmu.pageTable.Find(req.PID, req.VAddr)
+			if found && page.DeviceID == gmmu.deviceID {
+				if gmmu.topSender.CanSend(1) {
+					rsp := vm.TranslationRspBuilder{}.
+						WithSendTime(now).
+						WithSrc(gmmu.topPort).
+						WithDst(req.Src).
+						WithRspTo(req.ID).
+						WithPage(page).
+						Build()
+					gmmu.topSender.Send(rsp)
+					tracing.TraceReqComplete(req, gmmu)
+					return true
+				}
+			}
+		}
+		// Mapping not found or false positive, start page table walk
 		gmmu.startWalking(req)
-
-		// fmt.Printf("%0.9f,%s,GMMUParseFromTop,%s\n",
-		// 	float64(now), gmmu.topPort.Name(), req.TaskID)
-
 	default:
-		log.Panicf("gmmu canot handle request of type %s", reflect.TypeOf(req))
+		log.Panicf("gmmu cannot handle request of type %s", reflect.TypeOf(req))
 	}
 
 	return true
@@ -218,19 +250,31 @@ func (gmmu *Comp) fetchFromBottom(now sim.VTimeInSec) bool {
 	return true
 }
 
-func (gmmu *Comp) handleTranslationRsp(now sim.VTimeInSec, rsponse *vm.TranslationRsp) bool {
-	reqTransaction := gmmu.remoteMemReqs[rsponse.Page.VAddr]
+func (gmmu *Comp) handleTranslationRsp(now sim.VTimeInSec, response *vm.TranslationRsp) bool {
+	reqTransaction := gmmu.remoteMemReqs[response.Page.VAddr]
+
+	// Update page table my change
+	gmmu.pageTable.Update(response.Page)
+
+	// Insert into Cuckoo filter my change
+	gmmu.cuckooMutex.Lock()
+	if !gmmu.cuckooFilter.Insert(gmmu.encodeVAddrPID(response.Page.VAddr, response.Page.PID)) {
+		log.Printf("Warning: Failed to insert VAddr %d, PID %d into Cuckoo filter", response.Page.VAddr, response.Page.PID)
+		gmmu.cuckooFilter.Reset()
+		gmmu.cuckooFilter.Insert(gmmu.encodeVAddrPID(response.Page.VAddr, response.Page.PID))
+	}
+	gmmu.cuckooMutex.Unlock()
 
 	rsp := vm.TranslationRspBuilder{}.
 		WithSendTime(now).
 		WithSrc(gmmu.topPort).
 		WithDst(reqTransaction.req.Src).
-		WithRspTo(rsponse.ID).
-		WithPage(rsponse.Page).
+		WithRspTo(response.ID).
+		WithPage(response.Page).
 		Build()
 
 	gmmu.topSender.Send(rsp)
 
-	delete(gmmu.remoteMemReqs, rsponse.Page.VAddr)
+	delete(gmmu.remoteMemReqs, response.Page.VAddr)
 	return true
 }
