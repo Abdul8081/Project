@@ -44,7 +44,7 @@ type Comp struct {
 	toRemoveFromPTW        []int
 	PageAccessedByDeviceID map[uint64][]uint64
 	cuckooFilter           *cuckoo.Filter // Cuckoo filter for fast lookup
-	cuckooMutex            sync.Mutex     // Mutex for thread-safe filter access my change
+	cuckooMutex            sync.Mutex     // Implemented my change
 }
 
 // Tick defines how the gmmu update state each cycle
@@ -81,7 +81,7 @@ func (gmmu *Comp) parseFromTop(now sim.VTimeInSec) bool {
 
 	switch req := req.(type) {
 	case *vm.TranslationReq:
-		// Check Cuckoo filter my change
+		// Check Cuckoo filter my change. this is the correct uses of the lock system which has been defined in the local akita, in the patable.go file
 		gmmu.cuckooMutex.Lock()
 		found := gmmu.cuckooFilter.Lookup(gmmu.encodeVAddrPID(req.VAddr, req.PID))
 		gmmu.cuckooMutex.Unlock()
@@ -253,10 +253,10 @@ func (gmmu *Comp) fetchFromBottom(now sim.VTimeInSec) bool {
 func (gmmu *Comp) handleTranslationRsp(now sim.VTimeInSec, response *vm.TranslationRsp) bool {
 	reqTransaction := gmmu.remoteMemReqs[response.Page.VAddr]
 
-	// Update page table my change
+	// Updating page table my change
 	gmmu.pageTable.Update(response.Page)
 
-	// Insert into Cuckoo filter my change
+	// Inserting Cuckoo filter my change
 	gmmu.cuckooMutex.Lock()
 	if !gmmu.cuckooFilter.Insert(gmmu.encodeVAddrPID(response.Page.VAddr, response.Page.PID)) {
 		log.Printf("Warning: Failed to insert VAddr %d, PID %d into Cuckoo filter", response.Page.VAddr, response.Page.PID)
