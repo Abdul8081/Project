@@ -131,7 +131,7 @@ func (b Builder) Build(name string) *Comp {
 		b.pageWalkingLatency = 10 // Reasonable default
 	}
 	if b.cuckooFilterCapacity == 0 {
-		b.cuckooFilterCapacity = 5000000 // Default capacity for ~1MB
+		b.cuckooFilterCapacity = 1000000 // Default capacity for ~1MB
 	}
 
 	b.createPorts(name, gmmu)
