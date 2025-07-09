@@ -43,7 +43,7 @@ type Comp struct {
 
 	toRemoveFromPTW        []int
 	PageAccessedByDeviceID map[uint64][]uint64
-	cuckooFilter           *cuckoo.Filter // Cuckoo filter for fast lookup
+	cuckooFilter           *cuckoo.Filter // Cuckoo filter for fast lookup my change
 	cuckooMutex            sync.Mutex     // Implemented my change
 }
 
@@ -67,6 +67,7 @@ func (gmmu *Comp) encodeVAddrPID(vAddr uint64, pid vm.PID) []byte {
 	return buf
 }
 
+// In this code flow needed to check my change
 func (gmmu *Comp) parseFromTop(now sim.VTimeInSec) bool {
 	if len(gmmu.walkingTranslations) >= gmmu.maxRequestsInFlight {
 		return false

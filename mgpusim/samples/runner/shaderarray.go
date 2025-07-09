@@ -31,10 +31,9 @@ type shaderArray struct {
 	l1sCache  *writethrough.Cache
 	l1iCache  *writethrough.Cache
 
-	l1vTLBs  []*tlb.L1TLB // Modified to use L1TLB from ring_noc.go
-	l1sTLB   *tlb.TLB
-	l1iTLB   *tlb.TLB
-	ringNoCs []*tlb.RingNoC // Added for ring NoC
+	l1vTLBs []*tlb.TLB
+	l1sTLB  *tlb.TLB
+	l1iTLB  *tlb.TLB
 }
 
 type shaderArrayBuilder struct {
@@ -146,29 +145,12 @@ func (b *shaderArrayBuilder) buildComponents(sa *shaderArray) {
 	b.buildL1IAddressTranslator(sa)
 	b.buildL1IReorderBuffer(sa)
 	b.buildL1ICache(sa)
-
-	b.buildRingNoCs(sa) // Added to initialize ring NoCs
 }
 
 func (b *shaderArrayBuilder) connectComponents(sa *shaderArray) {
 	b.connectVectorMem(sa)
 	b.connectScalarMem(sa)
 	b.connectInstMem(sa)
-}
-
-func (b *shaderArrayBuilder) buildRingNoCs(sa *shaderArray) {
-	numSEs := b.numCU / 16 // Assume 16 CUs per SE
-	if b.numCU%16 != 0 {
-		log.Fatalf("Number of CUs (%d) must be divisible by 16", b.numCU)
-	}
-	tlbBuilder := tlb.MakeBuilder().
-		WithEngine(b.engine).
-		WithFreq(b.freq).
-		WithNumMSHREntry(4).
-		WithNumSets(1).
-		WithNumWays(64).
-		WithNumReqPerCycle(4)
-	sa.ringNoCs = tlb.InitializeRingNoCs(numSEs, b.engine, tlbBuilder)
 }
 
 func (b *shaderArrayBuilder) connectVectorMem(sa *shaderArray) {
@@ -309,23 +291,20 @@ func (b *shaderArrayBuilder) buildCUs(sa *shaderArray) {
 	}
 }
 
-func (b *shaderArrayBuilder) buildL1VTLBs(sa *shaderArray) {
-	tlbBuilder := tlb.MakeBuilder().
+func (b *shaderArrayBuilder) buildL1VReorderBuffers(sa *shaderArray) {
+	builder := rob.MakeBuilder().
 		WithEngine(b.engine).
 		WithFreq(b.freq).
-		WithNumMSHREntry(4).
-		WithNumSets(1).
-		WithNumWays(64).
+		WithBufferSize(128).
 		WithNumReqPerCycle(4)
 
 	for i := 0; i < b.numCU; i++ {
-		name := fmt.Sprintf("%s.L1VTLB[%d]", b.name, i)
-		// TLBs are initialized via RingNoC to ensure ring topology
-		tlb := sa.ringNoCs[i/16].TLBs[i%16] // Assign TLB from ring NoC
-		sa.l1vTLBs = append(sa.l1vTLBs, tlb)
+		name := fmt.Sprintf("%s.L1VROB[%d]", b.name, i)
+		rob := builder.Build(name)
+		sa.l1vROBs = append(sa.l1vROBs, rob)
 
 		if b.visTracer != nil {
-			tracing.CollectTrace(tlb, b.visTracer)
+			tracing.CollectTrace(rob, b.visTracer)
 		}
 	}
 }
@@ -348,20 +327,22 @@ func (b *shaderArrayBuilder) buildL1VAddressTranslators(sa *shaderArray) {
 	}
 }
 
-func (b *shaderArrayBuilder) buildL1VReorderBuffers(sa *shaderArray) {
-	builder := rob.MakeBuilder().
+func (b *shaderArrayBuilder) buildL1VTLBs(sa *shaderArray) {
+	builder := tlb.MakeBuilder().
 		WithEngine(b.engine).
 		WithFreq(b.freq).
-		WithBufferSize(128).
+		WithNumMSHREntry(4).
+		WithNumSets(1).
+		WithNumWays(64).
 		WithNumReqPerCycle(4)
 
 	for i := 0; i < b.numCU; i++ {
-		name := fmt.Sprintf("%s.L1VROB[%d]", b.name, i)
-		rob := builder.Build(name)
-		sa.l1vROBs = append(sa.l1vROBs, rob)
+		name := fmt.Sprintf("%s.L1VTLB[%d]", b.name, i)
+		tlb := builder.Build(name)
+		sa.l1vTLBs = append(sa.l1vTLBs, tlb)
 
 		if b.visTracer != nil {
-			tracing.CollectTrace(rob, b.visTracer)
+			tracing.CollectTrace(tlb, b.visTracer)
 		}
 	}
 }
@@ -392,21 +373,19 @@ func (b *shaderArrayBuilder) buildL1VCaches(sa *shaderArray) {
 	}
 }
 
-func (b *shaderArrayBuilder) buildL1STLB(sa *shaderArray) {
-	builder := tlb.MakeBuilder().
+func (b *shaderArrayBuilder) buildL1SReorderBuffer(sa *shaderArray) {
+	builder := rob.MakeBuilder().
 		WithEngine(b.engine).
 		WithFreq(b.freq).
-		WithNumMSHREntry(4).
-		WithNumSets(1).
-		WithNumWays(64).
+		WithBufferSize(128).
 		WithNumReqPerCycle(4)
 
-	name := fmt.Sprintf("%s.L1STLB", b.name)
-	tlb := builder.Build(name)
-	sa.l1sTLB = tlb
+	name := fmt.Sprintf("%s.L1SROB", b.name)
+	rob := builder.Build(name)
+	sa.l1sROB = rob
 
 	if b.visTracer != nil {
-		tracing.CollectTrace(tlb, b.visTracer)
+		tracing.CollectTrace(rob, b.visTracer)
 	}
 }
 
@@ -426,19 +405,21 @@ func (b *shaderArrayBuilder) buildL1SAddressTranslator(sa *shaderArray) {
 	}
 }
 
-func (b *shaderArrayBuilder) buildL1SReorderBuffer(sa *shaderArray) {
-	builder := rob.MakeBuilder().
+func (b *shaderArrayBuilder) buildL1STLB(sa *shaderArray) {
+	builder := tlb.MakeBuilder().
 		WithEngine(b.engine).
 		WithFreq(b.freq).
-		WithBufferSize(128).
+		WithNumMSHREntry(4).
+		WithNumSets(1).
+		WithNumWays(64).
 		WithNumReqPerCycle(4)
 
-	name := fmt.Sprintf("%s.L1SROB", b.name)
-	rob := builder.Build(name)
-	sa.l1sROB = rob
+	name := fmt.Sprintf("%s.L1STLB", b.name)
+	tlb := builder.Build(name)
+	sa.l1sTLB = tlb
 
 	if b.visTracer != nil {
-		tracing.CollectTrace(rob, b.visTracer)
+		tracing.CollectTrace(tlb, b.visTracer)
 	}
 }
 

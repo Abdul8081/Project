@@ -30,19 +30,11 @@ type TLB struct {
 
 	mshr                mshr
 	respondingMSHREntry *mshrEntry
-	isPaused            bool
+
+	isPaused bool
 }
 
-// L1TLB extends TLB with ring NoC-specific functionality
-type NewL1TLB struct {
-	*TLB
-	ID             int            // Unique TLB ID within the SE (0 to 15)
-	PrefetchBuffer []vm.Page      // 24-entry prefetch buffer
-	ProbeQueue     []ProbeRequest // 16-entry queue for probe requests
-	Ring           *RingNoC       // Reference to the ring NoC
-}
-
-// Reset sets all the entries in the TLB to be invalid
+// Reset sets all the entries int he TLB to be invalid
 func (tlb *TLB) reset() {
 	tlb.Sets = make([]internal.Set, tlb.numSets)
 	for i := 0; i < tlb.numSets; i++ {
@@ -151,15 +143,6 @@ func (tlb *TLB) handleTranslationMiss(
 	now sim.VTimeInSec,
 	req *vm.TranslationReq,
 ) bool {
-	if l1tlb, ok := interface{}(tlb).(*NewL1TLB); ok {
-		// For L1TLBs in ring NoC, initiate probing
-		l1tlb.InitiateProbing(req.VAddr)
-		tlb.topPort.Retrieve(now)
-		tracing.TraceReqReceive(req, tlb)
-		tracing.AddTaskStep(tracing.MsgIDAtReceiver(req, tlb), tlb, "miss")
-		return true
-	}
-
 	if tlb.mshr.IsFull() {
 		return false
 	}
@@ -351,40 +334,4 @@ func (tlb *TLB) handleTLBRestart(now sim.VTimeInSec, req *RestartReq) bool {
 	}
 
 	return true
-}
-
-// InitiateProbing initiates probing for a virtual address
-// I have removed because it has been alredy define in the ring_noc.go
-func (tlb *BaselineL1TLB) InitiateProbing(virtualAddr uint64) {
-	clockwiseReq := &ProbeRequest{
-		MsgMeta: sim.MsgMeta{
-			ID:           sim.GetIDGenerator().Generate(),
-			Src:          tlb.topPort, // Fix: Use topPort
-			Dst:          nil,
-			SendTime:     tlb.Ring.engine.CurrentTime(),
-			TrafficClass: 0,
-			TrafficBytes: 64,
-		},
-		VirtualAddr: virtualAddr,
-		TTL:         15,
-		Direction:   "clockwise",
-		SourceTLB:   tlb.ID,
-		SEID:        tlb.Ring.SEID,
-	}
-	counterclockwiseReq := &ProbeRequest{
-		MsgMeta: sim.MsgMeta{
-			ID:           sim.GetIDGenerator().Generate(),
-			Src:          tlb.topPort, // Fix: Use topPort
-			Dst:          nil,
-			SendTime:     tlb.Ring.engine.CurrentTime(),
-			TrafficClass: 0,
-			TrafficBytes: 64,
-		},
-		VirtualAddr: virtualAddr,
-		TTL:         4,
-		Direction:   "counterclockwise",
-		SourceTLB:   tlb.ID,
-		SEID:        tlb.Ring.SEID,
-	}
-	tlb.ProbeQueue = append(tlb.ProbeQueue, *clockwiseReq, *counterclockwiseReq)
 }
