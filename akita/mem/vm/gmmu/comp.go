@@ -116,7 +116,7 @@ func (gmmu *Comp) parseFromTop(now sim.VTimeInSec) bool {
 	return true
 }
 
-// my changes
+// my changes bypassing gmmu and sending directly to the mmu
 func (gmmu *Comp) bypassGMMUSendToIOMMU(now sim.VTimeInSec, req *vm.TranslationReq) bool {
 	transaction := transaction{
 		req:       req,
