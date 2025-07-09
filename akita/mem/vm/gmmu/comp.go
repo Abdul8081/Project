@@ -87,8 +87,9 @@ func (gmmu *Comp) parseFromTop(now sim.VTimeInSec) bool {
 		gmmu.cuckooMutex.Unlock()
 		if found {
 			// Verify with page table to handle false positives
+			//add here page table walk.
 			page, found := gmmu.pageTable.Find(req.PID, req.VAddr)
-			if found && page.DeviceID == gmmu.deviceID {
+			if found && page.DeviceID == gmmu.deviceID { //it means that is confirm there in the gmmu, send response
 				if gmmu.topSender.CanSend(1) {
 					rsp := vm.TranslationRspBuilder{}.
 						WithSendTime(now).
@@ -102,9 +103,12 @@ func (gmmu *Comp) parseFromTop(now sim.VTimeInSec) bool {
 					return true
 				}
 			}
+			// Mapping not found or false positive, start page table walk
+			gmmu.startWalking(req)
+		} else {
+			// Bypass GMMU and send directly to IOMMU
+			gmmu.bypassGMMUSendToIOMMU(now, req)
 		}
-		// Mapping not found or false positive, start page table walk
-		gmmu.startWalking(req)
 	default:
 		log.Panicf("gmmu cannot handle request of type %s", reflect.TypeOf(req))
 	}
@@ -112,6 +116,29 @@ func (gmmu *Comp) parseFromTop(now sim.VTimeInSec) bool {
 	return true
 }
 
+// my changes
+func (gmmu *Comp) bypassGMMUSendToIOMMU(now sim.VTimeInSec, req *vm.TranslationReq) bool {
+	transaction := transaction{
+		req:       req,
+		cycleLeft: 0,
+	}
+
+	gmmu.remoteMemReqs[req.VAddr] = transaction
+
+	newReq := vm.TranslationReqBuilder{}.
+		WithSendTime(now).
+		WithSrc(gmmu.bottomPort).
+		WithDst(gmmu.LowModule).
+		WithPID(req.PID).
+		WithVAddr(req.VAddr).
+		WithDeviceID(req.DeviceID).
+		Build()
+
+	err := gmmu.bottomPort.Send(newReq)
+	return err == nil
+}
+
+// look here, request has been came to the gmmu pagetablewalk
 func (gmmu *Comp) startWalking(req *vm.TranslationReq) {
 	translationInPipeline := transaction{
 		req:       req,
@@ -260,7 +287,7 @@ func (gmmu *Comp) handleTranslationRsp(now sim.VTimeInSec, response *vm.Translat
 	gmmu.cuckooMutex.Lock()
 	if !gmmu.cuckooFilter.Insert(gmmu.encodeVAddrPID(response.Page.VAddr, response.Page.PID)) {
 		log.Printf("Warning: Failed to insert VAddr %d, PID %d into Cuckoo filter", response.Page.VAddr, response.Page.PID)
-		gmmu.cuckooFilter.Reset()
+		gmmu.cuckooFilter.Reset() // because if not be abel to insert it means cuckoo filet is alrezdy full, then we will required to reset it!!
 		gmmu.cuckooFilter.Insert(gmmu.encodeVAddrPID(response.Page.VAddr, response.Page.PID))
 	}
 	gmmu.cuckooMutex.Unlock()
